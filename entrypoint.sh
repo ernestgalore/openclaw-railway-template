@@ -53,12 +53,16 @@ seed_file_from_b64 YUMYUM_OWNER_STATE_JSON_B64 /data/.config/yumyum-owner-cli/st
 
 mkdir -p /data/workspace
 install_workspace_file /app/workspace-tools/YUMYUM_OWNER.md /data/workspace/YUMYUM_OWNER.md 0644
-install_workspace_file /app/workspace-tools/bin/yumyum-owner /data/workspace/bin/yumyum-owner 0755
-install_workspace_file /app/workspace-tools/lib/yumyum_owner.py /data/workspace/lib/yumyum_owner.py 0644
 append_workspace_hint \
   /data/workspace/TOOLS.md \
-  'yumyum-owner whoami' \
-  'Yumyum owner helper: use `yumyum-owner whoami`, `yumyum-owner restaurant`, `yumyum-owner employees`, `yumyum-owner schedules`, or inspect `YUMYUM_OWNER.md`.'
+  'owner-cli auth whoami' \
+  'Yumyum owner CLI: use `owner-cli auth whoami`, `owner-cli restaurants current`, `owner-cli operations` to discover commands, or inspect `YUMYUM_OWNER.md` and the `yumyum-owner-operations` skill.'
+
+# Install / refresh the yumyum-owner-operations skill.
+# The OpenClaw runtime auto-discovers skills under /data/.openclaw/skills.
+mkdir -p /data/.openclaw/skills
+rm -rf /data/.openclaw/skills/yumyum-owner-operations
+cp -a /app/workspace-tools/skills/yumyum-owner-operations /data/.openclaw/skills/yumyum-owner-operations
 
 chown -R openclaw:openclaw /data
 chmod 700 /data
@@ -81,6 +85,5 @@ chown -R openclaw:openclaw /home/openclaw/.config
 chown -h openclaw:openclaw /home/openclaw/.config/yumyum-owner-cli
 
 export YUMYUM_OWNER_STATE_PATH=/home/openclaw/.config/yumyum-owner-cli/state.json
-export PATH="/data/workspace/bin:${PATH}"
 
 exec gosu openclaw node src/server.js

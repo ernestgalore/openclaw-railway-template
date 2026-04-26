@@ -1,31 +1,50 @@
-# Dama Owner Access
+# Yumyum Owner Access
 
-This workspace includes a scoped helper CLI for the Dama restaurant owner context.
+This workspace is configured to operate the Yumyum tips backend
+as the seeded owner account.
 
-Use `yumyum-owner` for authenticated Yumyum actions. It reads the seeded owner
-state from `~/.config/yumyum-owner-cli/state.json` and defaults to the restaurant
-stored there.
+## CLI
 
-Read-first commands:
+The supported tool is `owner-cli`, installed system-wide from the
+vendored `yumyum-owner-cli` wheel. State lives at
+`~/.config/yumyum-owner-cli/state.json` and is seeded at boot from
+the `YUMYUM_OWNER_STATE_JSON_B64` Railway env var (config + session +
+restaurant context). Refresh tokens auto-rotate; no interactive login
+is needed for normal use.
 
-- `yumyum-owner whoami`
-- `yumyum-owner restaurant`
-- `yumyum-owner employees`
-- `yumyum-owner schedules`
-- `yumyum-owner policies`
-- `yumyum-owner inventory categories`
-- `yumyum-owner inventory items`
-- `yumyum-owner inventory suppliers`
+## Authoritative reference
 
-Generic API access:
+Use the `yumyum-owner-operations` skill (auto-discovered by OpenClaw
+under `/data/.openclaw/skills/`). It documents the canonical product
+surfaces, supported commands, operating rules, and safety guardrails.
 
-- `yumyum-owner get '/api/v1/restaurants/{restaurant_id}/employees'`
-- `yumyum-owner post '/api/v1/restaurants/{restaurant_id}/inventory/suppliers' --data '{"name":"Example"}'`
-- `yumyum-owner put '/api/v1/restaurants/{restaurant_id}/employees/<employee_id>' --data '{"canSchedule":true}'`
+## Quick smoke checks
 
-Safety notes:
+```
+owner-cli version
+owner-cli auth whoami
+owner-cli restaurants current
+owner-cli operations          # list dedicated action commands
+```
 
-- This auth is owner-scoped for Dama. Treat writes as real production actions.
-- Prefer reading current state before mutating data.
-- The seeded state currently has no refresh token. If requests start failing with
-  `401`, the owner state needs to be reseeded.
+## Generic API access
+
+When no dedicated command exists, fall back to the authenticated
+request helper:
+
+```
+owner-cli request GET  /api/v1/restaurants/{restaurant_id}/employees
+owner-cli request POST /api/v1/restaurants/{restaurant_id}/inventory/suppliers \
+  --data '{"name":"Example"}'
+owner-cli request PUT  /api/v1/restaurants/{restaurant_id}/employees/<id> \
+  --data '{"canSchedule":true}'
+```
+
+## Safety notes
+
+- Auth is owner-scoped for the seeded restaurant. Treat writes as real
+  production actions.
+- Read state before mutating. Run `owner-cli restaurants current` and
+  `owner-cli auth whoami` first when in doubt.
+- If requests start failing with 401, the refresh token in the seeded
+  state has expired and `YUMYUM_OWNER_STATE_JSON_B64` needs re-seeding.

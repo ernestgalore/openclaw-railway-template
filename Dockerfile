@@ -8,6 +8,7 @@ RUN apt-get update \
     gosu \
     procps \
     python3 \
+    python3-pip \
     build-essential \
     zip \
   && rm -rf /var/lib/apt/lists/*
@@ -22,6 +23,11 @@ RUN corepack enable && pnpm install --frozen-lockfile --prod
 COPY src ./src
 COPY workspace-tools ./workspace-tools
 COPY --chmod=755 entrypoint.sh ./entrypoint.sh
+
+# Install the Yumyum owner CLI from the vendored wheel.
+# The wheel ships only the CLI module (no FastAPI deps); ~18 KB.
+RUN python3 -m pip install --no-cache-dir --break-system-packages \
+      /app/workspace-tools/dist/yumyum_owner_cli-*.whl
 
 RUN useradd -m -s /bin/bash openclaw \
   && chown -R openclaw:openclaw /app \
