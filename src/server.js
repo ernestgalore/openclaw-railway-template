@@ -113,6 +113,13 @@ const GATEWAY_TARGET = `http://${INTERNAL_GATEWAY_HOST}:${INTERNAL_GATEWAY_PORT}
 const OPENCLAW_ENTRY =
   process.env.OPENCLAW_ENTRY?.trim() || "/openclaw/dist/entry.js";
 const OPENCLAW_NODE = process.env.OPENCLAW_NODE?.trim() || "node";
+const AUTO_BOOTSTRAP_CODEX =
+  process.env.AUTO_BOOTSTRAP_CODEX?.toLowerCase() === "true";
+const OPENCLAW_MODEL =
+  process.env.OPENCLAW_MODEL?.trim() || "openai-codex/gpt-5.4";
+const CODEX_AUTH_PATH = path.join(os.homedir(), ".codex", "auth.json");
+const RUN_DOCTOR_ON_BOOT =
+  process.env.RUN_DOCTOR_ON_BOOT?.toLowerCase() === "true";
 
 const ENABLE_WEB_TUI = process.env.ENABLE_WEB_TUI?.toLowerCase() === "true";
 const TUI_IDLE_TIMEOUT_MS = Number.parseInt(
@@ -138,6 +145,14 @@ function configPath() {
 function isConfigured() {
   try {
     return fs.existsSync(configPath());
+  } catch {
+    return false;
+  }
+}
+
+function hasCodexAuth() {
+  try {
+    return fs.existsSync(CODEX_AUTH_PATH);
   } catch {
     return false;
   }
@@ -810,6 +825,107 @@ function runCmd(cmd, args, opts = {}) {
   });
 }
 
+async function maybeBootstrapWithCodex() {
+  if (!AUTO_BOOTSTRAP_CODEX || isConfigured()) {
+    return { ok: false, reason: "disabled_or_already_configured" };
+  }
+
+  if (!hasCodexAuth()) {
+    log.warn(
+      "bootstrap",
+      `AUTO_BOOTSTRAP_CODEX is enabled but ${CODEX_AUTH_PATH} is missing`,
+    );
+    return { ok: false, reason: "missing_codex_auth" };
+  }
+
+  fs.mkdirSync(STATE_DIR, { recursive: true });
+  fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
+
+  log.info("bootstrap", "running automatic OpenClaw bootstrap with Codex auth");
+
+  const onboardArgs = [
+    "onboard",
+    "--non-interactive",
+    "--accept-risk",
+    "--json",
+    "--no-install-daemon",
+    "--skip-health",
+    "--workspace",
+    WORKSPACE_DIR,
+    "--gateway-bind",
+    "loopback",
+    "--gateway-port",
+    String(INTERNAL_GATEWAY_PORT),
+    "--gateway-auth",
+    "token",
+    "--gateway-token",
+    OPENCLAW_GATEWAY_TOKEN,
+    "--flow",
+    "quickstart",
+    "--auth-choice",
+    "skip",
+  ];
+
+  const onboard = await runCmd(OPENCLAW_NODE, clawArgs(onboardArgs));
+  log.info("bootstrap", `onboard exit=${onboard.code}`);
+  if (onboard.output) {
+    log.info("bootstrap", onboard.output);
+  }
+
+  if (onboard.code !== 0 || !isConfigured()) {
+    throw new Error("automatic onboarding failed");
+  }
+
+  const configSteps = [
+    [
+      "allow insecure auth",
+      ["config", "set", "gateway.controlUi.allowInsecureAuth", "true"],
+    ],
+    [
+      "set gateway token",
+      ["config", "set", "gateway.auth.token", OPENCLAW_GATEWAY_TOKEN],
+    ],
+    [
+      "set trusted proxies",
+      [
+        "config",
+        "set",
+        "--json",
+        "gateway.trustedProxies",
+        '["127.0.0.1"]',
+      ],
+    ],
+  ];
+
+  for (const [label, args] of configSteps) {
+    const result = await runCmd(OPENCLAW_NODE, clawArgs(args));
+    log.info("bootstrap", `${label} exit=${result.code}`);
+    if (result.output) {
+      log.info("bootstrap", result.output);
+    }
+    if (result.code !== 0) {
+      throw new Error(`bootstrap step failed: ${label}`);
+    }
+  }
+
+  if (OPENCLAW_MODEL) {
+    const modelResult = await runCmd(
+      OPENCLAW_NODE,
+      clawArgs(["models", "set", OPENCLAW_MODEL]),
+    );
+    log.info("bootstrap", `models set ${OPENCLAW_MODEL} exit=${modelResult.code}`);
+    if (modelResult.output) {
+      log.info("bootstrap", modelResult.output);
+    }
+    if (modelResult.code !== 0) {
+      throw new Error(`failed to set model to ${OPENCLAW_MODEL}`);
+    }
+  }
+
+  await syncAllowedOrigins();
+  return { ok: true };
+}
+
 const VALID_AUTH_CHOICES = [
   "apiKey",
   "openai-api-key",
@@ -1449,9 +1565,23 @@ const server = app.listen(PORT, () => {
   log.info("wrapper", `setup wizard: http://localhost:${PORT}/setup`);
   log.info("wrapper", `web TUI: ${ENABLE_WEB_TUI ? "enabled" : "disabled"}`);
   log.info("wrapper", `configured: ${isConfigured()}`);
+  log.info("wrapper", `auto bootstrap codex: ${AUTO_BOOTSTRAP_CODEX}`);
+  log.info("wrapper", `run doctor on boot: ${RUN_DOCTOR_ON_BOOT}`);
 
-  if (isConfigured()) {
-    (async () => {
+  (async () => {
+    if (!isConfigured() && AUTO_BOOTSTRAP_CODEX) {
+      try {
+        await maybeBootstrapWithCodex();
+      } catch (err) {
+        log.error("bootstrap", `automatic bootstrap failed: ${err.message}`);
+      }
+    }
+
+    if (!isConfigured()) {
+      return;
+    }
+
+    if (RUN_DOCTOR_ON_BOOT) {
       try {
         log.info("wrapper", "running openclaw doctor --fix...");
         const dr = await runCmd(OPENCLAW_NODE, clawArgs(["doctor", "--fix"]));
@@ -1460,11 +1590,11 @@ const server = app.listen(PORT, () => {
       } catch (err) {
         log.warn("wrapper", `doctor --fix failed: ${err.message}`);
       }
-      await ensureGatewayRunning();
-    })().catch((err) => {
-      log.error("wrapper", `failed to start gateway at boot: ${err.message}`);
-    });
-  }
+    }
+    await ensureGatewayRunning();
+  })().catch((err) => {
+    log.error("wrapper", `failed to start gateway at boot: ${err.message}`);
+  });
 });
 
 const tuiWss = createTuiWebSocketServer(server);
