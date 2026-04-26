@@ -64,6 +64,16 @@ mkdir -p /data/.openclaw/skills
 rm -rf /data/.openclaw/skills/yumyum-owner-operations
 cp -a /app/workspace-tools/skills/yumyum-owner-operations /data/.openclaw/skills/yumyum-owner-operations
 
+# Sweep legacy yumyum-owner helper artifacts left on the volume by
+# pre-owner-cli deploys. Safe no-ops if already absent.
+rm -f /data/workspace/bin/owner-cli
+rm -f /data/workspace/bin/yumyum-owner
+rm -f /data/workspace/lib/owner_cli.py
+rm -f /data/workspace/lib/yumyum_owner.py
+rmdir /data/workspace/bin /data/workspace/lib 2>/dev/null || true
+rm -f /home/linuxbrew/.linuxbrew/bin/owner-cli
+rm -f /home/linuxbrew/.linuxbrew/bin/yumyum-owner
+
 chown -R openclaw:openclaw /data
 chmod 700 /data
 
@@ -85,5 +95,23 @@ chown -R openclaw:openclaw /home/openclaw/.config
 chown -h openclaw:openclaw /home/openclaw/.config/yumyum-owner-cli
 
 export YUMYUM_OWNER_STATE_PATH=/home/openclaw/.config/yumyum-owner-cli/state.json
+
+# Mint a fresh owner session on every boot via `owner-cli auth assume`.
+# Requires SUPABASE_JWT_SECRET (project JWT signing secret) and the
+# YUMYUM_OWNER_USER_ID (Supabase auth user UUID) Railway env vars.
+# The seeded YUMYUM_OWNER_STATE_JSON_B64 still provides config + restaurant
+# context; this command overlays a non-expired session into the same state
+# file so authed CLI calls work without operator intervention.
+if [ -n "${SUPABASE_JWT_SECRET:-}" ] && [ -n "${YUMYUM_OWNER_USER_ID:-}" ]; then
+  if ! gosu openclaw \
+       env SUPABASE_JWT_SECRET="$SUPABASE_JWT_SECRET" \
+           YUMYUM_OWNER_STATE_FILE="$YUMYUM_OWNER_STATE_PATH" \
+       owner-cli auth assume \
+         --user-id "$YUMYUM_OWNER_USER_ID" \
+         --expires-in 86400 \
+         >/dev/null 2>&1; then
+    echo "[entrypoint] warning: owner-cli auth assume failed; CLI calls may need manual login" >&2
+  fi
+fi
 
 exec gosu openclaw node src/server.js
